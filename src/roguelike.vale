@@ -1,0 +1,382 @@
+import v.builtins.print.*;
+import v.builtins.arith.*;
+import stdlib.math.*;
+
+// roguelike.vale - A simple Roguelike game, made in Vale.
+//
+// To build:
+//     valec build rl=src
+//
+// This program displays a map like:
+//   ##########
+//   #......g.#
+//   #........#
+//   #..g..g..#
+//   #..@...g.#
+//   #.g......#
+//   #.g.g..g.#
+//   #g...g...#
+//   #........#
+//   ##########
+// where the player controls the @. When the player tries to move onto a space
+// already occupied by a goblin ("g"), it will destroy the goblin.
+
+
+// TODO: bring in stdin
+func vassert(cond bool) {
+  vassert(cond, "Assertion failed!");
+}
+func vassert(cond bool, msg str) {
+  if (cond == false) {
+    print(msg);
+    print("\n");
+    __vbi_panic();
+  }
+}
+func ==<A', B'>(a A'str, b B'str) bool {
+  streq(a, 0, a.len(), b, 0, b.len())
+}
+
+func between(x int, min int, max int) bool {
+  min <= x and x <= max
+}
+
+struct XS32Rand {
+  seed! i64;
+}
+/// Re-enable tuples
+struct RandNextResult {
+  num i64;
+  rand XS32Rand;
+}
+// From https://github.com/cgmb/euler/blob/a906355343dc0d320858a7b00504040d04c053f7/misc/rng.c
+// State must point to a non-zero value.
+// Based on "An Experimental Exploration of Marsaglia's xorshift Generators, Scrambled" (2016)
+func Next(self XS32Rand) RandNextResult {
+  [x] = self;
+  set x = x xor (x rshift 12);
+  set x = x xor (x lshift 25);
+  set x = x xor (x rshift 27);
+  return RandNextResult(x * 2685821657736338717i64 rshift 32, XS32Rand(x));
+}
+
+
+struct Goblin {
+  row! int;
+  col! int;
+}
+
+func MakeBoard(num_rows int, num_cols int) [][]str {
+  rows = [][]str(num_rows);
+
+  row_i = 0;
+  while row_i < num_rows {
+
+    row = []str(num_cols);
+
+    col_i = 0;
+    while col_i < num_cols {
+      row.push(
+        if row_i == 0 { "#" }
+        else if col_i == 0 { "#" }
+        else if row_i == num_rows - 1 { "#" }
+        else if col_i == num_cols - 1 { "#" }
+        else { "." });
+
+      set col_i = col_i + 1;
+    }
+
+    rows.push(row);
+
+    set row_i = row_i + 1;
+  }
+
+  return rows;
+}
+
+pure func Display<r'>(
+    board &r'[][]str,
+    goblins &r'[]Goblin,
+    playerRow int,
+    playerCol int)
+{
+  toPrint = "";
+
+  row_i = 0;
+  while row_i < board.len() {
+    row = board[row_i];
+
+    col_i = 0;
+    while col_i < row.len() {
+      if row_i == playerRow and col_i == playerCol {
+        set toPrint = toPrint + "@";
+      } else if GoblinAt(&goblins, row_i, col_i) >= 0 {
+        set toPrint = toPrint + "g";
+      } else {
+        set toPrint = toPrint + row[col_i];
+      }
+
+      set col_i = col_i + 1;
+    }
+
+    set toPrint = toPrint + "\n";
+
+    set row_i = row_i + 1;
+  }
+
+  print(toPrint);
+}
+
+struct Direction {
+  row_delta int;
+  col_delta int;
+}
+/// TODO: Bring back tuples
+#!DeriveStructDrop
+struct GoRandomDirectionResult {
+  direction Direction;
+  new_rand XS32Rand;
+}
+func GoRandomDirection(rand XS32Rand) GoRandomDirectionResult {
+  [row_delta_i64, set rand] = Next(rand);
+  [col_delta_i64, set rand] = Next(rand);
+  row_delta = TruncateI64ToI32((row_delta_i64 mod 3i64) - 1i64);
+  col_delta = TruncateI64ToI32((col_delta_i64 mod 3i64) - 1i64);
+  return GoRandomDirectionResult(Direction(row_delta, col_delta), rand);
+}
+
+#!DeriveStructDrop
+struct GetGoblinActionResult {
+  goblin_new_row int;
+  goblin_new_col int;
+}
+func GetGoblinAction<r'>(
+    board &r'[][]str,
+    goblins &r'[]Goblin,
+    rand_seed i64,
+    goblin_i int,
+    player_row int,
+    player_col int,
+) GetGoblinActionResult {
+  rand = XS32Rand(rand_seed);
+  goblin = goblins[goblin_i];
+  rows_to_player = player_row - goblin.row;
+  cols_to_player = player_col - goblin.col;
+  if between(rows_to_player, -3, 3) and between(cols_to_player, -3, 3) {
+    // Player is near, charge!
+    row_direction = signum(rows_to_player);
+    col_direction = signum(cols_to_player);
+
+    goblin_new_row = goblin.row + row_direction;
+    goblin_new_col = goblin.col + col_direction;
+    if between(goblin_new_row, 0, board.len()) and between(goblin_new_col, 0, board[0].len()) {
+      if board[goblin_new_row][goblin_new_col] == "." {
+        if GoblinAt(goblins, goblin_new_row, goblin_new_col) == -1 {
+          return GetGoblinActionResult(goblin_new_row, goblin_new_col);
+        }
+      }
+    }
+    // continues
+  } else {
+    // Player isn't near, wander.
+    [[row_delta, col_delta], set rand] = GoRandomDirection(rand);
+
+    goblin_new_row = goblin.row + row_delta;
+    goblin_new_col = goblin.col + col_delta;
+    if between(goblin_new_row, 0, board.len()) and between(goblin_new_col, 0, board[0].len()) {
+      if board[goblin_new_row][goblin_new_col] == "." {
+        if GoblinAt(goblins, goblin_new_row, goblin_new_col) == -1 {
+          return GetGoblinActionResult(goblin_new_row, goblin_new_col);
+        }
+      }
+    }
+    // continues
+  }
+
+  // Stay at current position
+  return GetGoblinActionResult(goblin.row, goblin.col);
+}
+
+// Returns the index in `goblins` of the goblin at that location.
+// Returns -1 if there isn't a goblin there
+func GoblinAt<r'>(goblins &r'[]Goblin, row int, col int) int {
+  goblin_i = 0;
+  while goblin_i < goblins.len() {
+    
+    [goblinCol, goblinRow] = goblins[goblin_i];
+    if row == goblinRow and col == goblinCol {
+      return goblin_i;
+    }
+
+    set goblin_i = goblin_i + 1;
+  }
+
+  return -1;
+}
+
+#!DeriveStructDrop
+struct ExtractGoblinResult {
+  goblin Goblin;
+  goblins []Goblin;
+}
+func ExtractGoblin(goblins []Goblin, index int) ExtractGoblinResult {
+  return ExtractGoblinResult(
+    if index == goblins.len() - 1 {
+      goblins.pop()
+    } else {
+      // Swap end goblin to this position
+      set goblins[index] = goblins.pop()
+    },
+    goblins);
+}
+
+func InsertGoblin(goblins []Goblin, index int, goblin Goblin) []Goblin {
+  if index == goblins.len() {
+    goblins.push(goblin);
+  } else {
+    // Swap the goblin here to the end
+    goblins.push(set goblins[index] = goblin);
+  }
+  return goblins;
+}
+
+#!DeriveStructDrop
+struct AddGoblinResult {
+  goblins []Goblin;
+  rand XS32Rand;
+}
+func AddGoblin(
+    goblins []Goblin,
+    rand XS32Rand,
+    num_rows int,
+    num_cols int)
+AddGoblinResult {
+  attempt = 0;
+  while attempt < 100 {
+    [goblin_row_i64, set rand] = Next(rand);
+    goblin_row = (TruncateI64ToI32(goblin_row_i64) mod (num_rows - 2)) + 1;
+    [goblin_col_i64, set rand] = Next(rand);
+    goblin_col = (TruncateI64ToI32(goblin_col_i64) mod (num_cols - 2)) + 1;
+
+    if between(goblin_row, 1, num_rows - 2) and between(goblin_col, 1, num_cols - 2) {
+      if GoblinAt(&goblins, goblin_row, goblin_col) == -1 {
+        goblins.push(Goblin(goblin_row, goblin_col));
+        break;
+      }
+    }
+
+    set attempt = attempt + 1;
+  }
+
+  return AddGoblinResult(goblins, rand);
+}
+
+exported func main() int {
+  //if numMainArgs() < 3 {
+  //  print("Usage: {getMainArg(0)} [width] [height]\n");
+  //  print("Example: {getMainArg(0)} 80 20\n");
+  //  return 1;
+  //}
+
+  display = numMainArgs() > 1 and getMainArg(1) == "--display";
+
+  num_rows = 20;//getMainArg(2);
+  num_cols = 80;//getMainArg(1);
+
+  rand = XS32Rand(1337i64);
+
+  board = MakeBoard(num_rows, num_cols);
+
+  playerRow = num_rows / 2;
+  playerCol = num_cols / 2;
+
+  initial_num_goblins = 30;
+
+  // change to linear constructing, maybe add a linear push
+  goblins = []Goblin(initial_num_goblins);
+  igi = 0;
+  while igi < initial_num_goblins {
+    [set goblins, set rand] = AddGoblin(goblins, rand, num_rows, num_cols);
+    set igi = igi + 1;
+  }
+
+  num_turns = 0;
+
+  running = true;
+  while running and num_turns < 1000 {
+    if display {
+      Display(&board, &goblins, playerRow, playerCol);
+    }
+
+    [[row_delta, col_delta], set rand] = GoRandomDirection(rand);
+    newPlayerRow = playerRow + row_delta;
+    set newPlayerRow = max(0, newPlayerRow);
+    set newPlayerRow = min(newPlayerRow, num_rows - 1);
+    newPlayerCol = playerCol + col_delta;
+    set newPlayerCol = max(0, newPlayerCol);
+    set newPlayerCol = min(newPlayerCol, num_cols - 1);
+    //newPlayerRow = playerRow;
+    //newPlayerCol = playerCol;
+
+    killed_goblin_index = GoblinAt(&goblins, newPlayerRow, newPlayerCol);
+
+    if killed_goblin_index >= 0 {
+      // TODO: add swapEndTo function for this
+      [killed_goblin, set goblins] = ExtractGoblin(goblins, killed_goblin_index);
+    } else {
+      if board[newPlayerRow][newPlayerCol] == "." {
+        set playerRow = newPlayerRow;
+        set playerCol = newPlayerCol;
+      }
+    }
+
+    goblin_i = 0;
+    while goblin_i < goblins.len() {
+      [gga_rand_seed, set rand] = Next(rand);
+      [goblin_new_row, goblin_new_col] =
+        GetGoblinAction(&board, &goblins, gga_rand_seed, goblin_i, playerRow, playerCol);
+      if goblin_new_row == playerRow and goblin_new_col == playerCol {
+        // hit player
+      } else {
+        [goblin, set goblins] = ExtractGoblin(goblins, goblin_i);
+        /// set goblin.row = goblin_new_row;
+        /// set goblin.col = goblin_new_col;
+        [old_row, old_col] = goblin;
+        set goblin = Goblin(goblin_new_row, goblin_new_col);
+        set goblins = InsertGoblin(goblins, goblin_i, goblin);
+      }
+
+      set goblin_i = goblin_i + 1;
+    }
+
+    if goblins.len() == 0 {
+      if display {
+        Display(&board, &goblins, playerRow, playerCol);
+        print("You win!\n");
+      }
+      set running = false;
+    }
+
+    set num_turns = num_turns + 1;
+  }
+
+  [zzz] = rand;
+
+  /// Re-enable array drop
+  while goblins.len() > 0 {
+    [row, col] = goblins.pop();
+  }
+  [] = goblins;
+
+  /// Re-enable array drop
+  while board.len() > 0 {
+    row = board.pop();
+    while row.len() > 0 {
+      row.pop();
+    }
+    [] = row;
+  }
+  [] = board;
+
+  return num_turns;
+}
