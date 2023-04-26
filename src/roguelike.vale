@@ -23,16 +23,6 @@ import stdlib.math.*;
 
 
 // TODO: bring in stdin
-func vassert(cond bool) {
-  vassert(cond, "Assertion failed!");
-}
-func vassert(cond bool, msg str) {
-  if (cond == false) {
-    print(msg);
-    print("\n");
-    __vbi_panic();
-  }
-}
 func ==<A', B'>(a A'str, b B'str) bool {
   streq(a, 0, a.len(), b, 0, b.len())
 }
@@ -57,7 +47,7 @@ func Next(self XS32Rand) RandNextResult {
   set x = x xor (x rshift 12);
   set x = x xor (x lshift 25);
   set x = x xor (x rshift 27);
-  return RandNextResult(x * 2685821657736338717i64 rshift 32, XS32Rand(x));
+  return RandNextResult(abs(x * 2685821657736338717i64) rshift 32, XS32Rand(x));
 }
 
 
@@ -111,6 +101,7 @@ pure func Display<r'>(
       if row_i == playerRow and col_i == playerCol {
         set toPrint = toPrint + "@";
       } else if GoblinAt(&goblins, row_i, col_i) >= 0 {
+        //println("Found goblin at {row_i},{col_i}");
         set toPrint = toPrint + "g";
       } else {
         set toPrint = toPrint + row[col_i];
@@ -150,7 +141,7 @@ struct GetGoblinActionResult {
   goblin_new_row int;
   goblin_new_col int;
 }
-func GetGoblinAction<r'>(
+pure func GetGoblinAction<r'>(
     board &r'[][]str,
     goblins &r'[]Goblin,
     rand_seed i64,
@@ -158,7 +149,7 @@ func GetGoblinAction<r'>(
     player_row int,
     player_col int,
 ) GetGoblinActionResult {
-  rand = XS32Rand(rand_seed);
+  rand = XS32Rand(-1i64 * rand_seed);
   goblin = goblins[goblin_i];
   rows_to_player = player_row - goblin.row;
   cols_to_player = player_col - goblin.col;
@@ -197,13 +188,52 @@ func GetGoblinAction<r'>(
   return GetGoblinActionResult(goblin.row, goblin.col);
 }
 
+#!DeriveStructDrop
+struct GetPlayerActionResult {
+  player_new_row int;
+  player_new_col int;
+}
+pure func GetPlayerAction<r'>(
+    board &r'[][]str,
+    goblins &r'[]Goblin,
+    rand_seed i64,
+    player_row int,
+    player_col int,
+) GetPlayerActionResult {
+  rand = XS32Rand(-1i64 * rand_seed);
+
+  if goblins.len() > 0 {
+    // Pick arbitrary goblin to head towards
+    goblin = goblins[0];
+
+    rows_to_goblin = goblin.row - player_row;
+    cols_to_goblin = goblin.col - player_col;
+
+    // Player is near, charge!
+    row_direction = signum(rows_to_goblin);
+    col_direction = signum(cols_to_goblin);
+
+    player_new_row = player_row + row_direction;
+    player_new_col = player_col + col_direction;
+    if between(player_new_row, 0, board.len()) and between(player_new_col, 0, board[0].len()) {
+      if board[player_new_row][player_new_col] == "." {
+        return GetPlayerActionResult(player_new_row, player_new_col);
+      }
+    }
+    // continues
+  }
+
+  // Stay at current position
+  return GetPlayerActionResult(player_row, player_col);
+}
+
 // Returns the index in `goblins` of the goblin at that location.
 // Returns -1 if there isn't a goblin there
-func GoblinAt<r'>(goblins &r'[]Goblin, row int, col int) int {
+pure func GoblinAt<r'>(goblins &r'[]Goblin, row int, col int) int {
   goblin_i = 0;
   while goblin_i < goblins.len() {
     
-    [goblinCol, goblinRow] = goblins[goblin_i];
+    [goblinRow, goblinCol] = goblins[goblin_i];
     if row == goblinRow and col == goblinCol {
       return goblin_i;
     }
@@ -261,6 +291,7 @@ AddGoblinResult {
     if between(goblin_row, 1, num_rows - 2) and between(goblin_col, 1, num_cols - 2) {
       if GoblinAt(&goblins, goblin_row, goblin_col) == -1 {
         goblins.push(Goblin(goblin_row, goblin_col));
+        //println("Added goblin at {goblin_row},{goblin_col}, new len: {goblins.len()}");
         break;
       }
     }
@@ -280,8 +311,8 @@ exported func main() int {
 
   display = numMainArgs() > 1 and getMainArg(1) == "--display";
 
-  num_rows = 20;//getMainArg(2);
-  num_cols = 80;//getMainArg(1);
+  num_rows = 50;//getMainArg(2);
+  num_cols = 200;//getMainArg(1);
 
   rand = XS32Rand(1337i64);
 
@@ -290,7 +321,7 @@ exported func main() int {
   playerRow = num_rows / 2;
   playerCol = num_cols / 2;
 
-  initial_num_goblins = 30;
+  initial_num_goblins = 100;
 
   // change to linear constructing, maybe add a linear push
   goblins = []Goblin(initial_num_goblins);
@@ -308,26 +339,15 @@ exported func main() int {
       Display(&board, &goblins, playerRow, playerCol);
     }
 
-    [[row_delta, col_delta], set rand] = GoRandomDirection(rand);
-    newPlayerRow = playerRow + row_delta;
-    set newPlayerRow = max(0, newPlayerRow);
-    set newPlayerRow = min(newPlayerRow, num_rows - 1);
-    newPlayerCol = playerCol + col_delta;
-    set newPlayerCol = max(0, newPlayerCol);
-    set newPlayerCol = min(newPlayerCol, num_cols - 1);
-    //newPlayerRow = playerRow;
-    //newPlayerCol = playerCol;
-
-    killed_goblin_index = GoblinAt(&goblins, newPlayerRow, newPlayerCol);
-
+    [gpa_rand_seed, set rand] = Next(rand);
+    [new_player_row, new_player_col] =
+        GetPlayerAction(&board, &goblins, gpa_rand_seed, playerRow, playerCol);
+    killed_goblin_index = GoblinAt(&goblins, new_player_row, new_player_col);
     if killed_goblin_index >= 0 {
-      // TODO: add swapEndTo function for this
       [killed_goblin, set goblins] = ExtractGoblin(goblins, killed_goblin_index);
     } else {
-      if board[newPlayerRow][newPlayerCol] == "." {
-        set playerRow = newPlayerRow;
-        set playerCol = newPlayerCol;
-      }
+      set playerRow = new_player_row;
+      set playerCol = new_player_col;
     }
 
     goblin_i = 0;
@@ -378,5 +398,5 @@ exported func main() int {
   }
   [] = board;
 
-  return num_turns;
+  return 0;
 }
