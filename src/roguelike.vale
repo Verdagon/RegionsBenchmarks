@@ -1,6 +1,7 @@
 import v.builtins.print.*;
 import v.builtins.arith.*;
 import stdlib.math.*;
+import stdlib.stdin.*;
 
 // TODO: bring in stdin
 func ==<A', B'>(a A'str, b B'str) bool {
@@ -171,30 +172,78 @@ pure func GetGoblinAction<r'>(
   return Location(goblin.row, goblin.col);
 }
 
+/// Change to use a Result or Opt
+struct InputDirectionResult {
+  direction Direction;
+  quit bool;
+}
+func InputDirection() InputDirectionResult {
+  while true {
+    key = getch();
+    if (key == 81) { // q
+      return InputDirectionResult(Direction(0, 0), true);
+    } else if (key == 119) { // w
+      return InputDirectionResult(Direction(-1, 0), false);
+    } else if (key == 115) { // s
+      return InputDirectionResult(Direction(1, 0), false);
+    } else if (key == 97) { // a
+      return InputDirectionResult(Direction(0, -1), false);
+    } else if (key == 100) { // d
+      return InputDirectionResult(Direction(0, 1), false);
+    } else if (key == 10) {
+      // Enter key, do nothing
+    }
+    // Continue
+  }
+  print("Unreachable InputKey\n");
+  __vbi_panic();
+}
+struct GetPlayerActionResult {
+  location Location;
+  quit bool;
+}
 pure func GetPlayerAction<r'>(
+    manual_control bool,
     board &r'[][]str,
     goblins &r'[]Goblin,
     rand_seed i64,
     player_row int,
     player_col int,
-) Location {
-  rand = XS32Rand(-1i64 * rand_seed);
-
-  if goblins.len() > 0 {
-    // Pick arbitrary goblin to head towards
-    goblin = goblins[0];
-    player_new_row = player_row + signum(goblin.row - player_row);
-    player_new_col = player_col + signum(goblin.col - player_col);
-    if between(player_new_row, 0, board.len()) and between(player_new_col, 0, board[0].len()) {
-      if board[player_new_row][player_new_col] == "." {
-        return Location(player_new_row, player_new_col);
+) GetPlayerActionResult {
+  if manual_control {
+    [[row_delta, col_delta], quit] = InputDirection();
+    if quit {
+      return GetPlayerActionResult(Location(player_row, player_col), true);
+    } else {
+      player_new_row = player_row + row_delta;
+      player_new_col = player_col + col_delta;
+      if between(player_new_row, 0, board.len()) and between(player_new_col, 0, board[0].len()) {
+        if board[player_new_row][player_new_col] == "." {
+          return GetPlayerActionResult(Location(player_new_row, player_new_col), false);
+        }
       }
+      // Stay still
+      return GetPlayerActionResult(Location(player_row, player_col), false);
     }
-    // continues
-  }
+  } else {
+    rand = XS32Rand(-1i64 * rand_seed);
 
-  // Stay at current position
-  return Location(player_row, player_col);
+    if goblins.len() == 0 {
+      return GetPlayerActionResult(Location(player_row, player_col), true);
+    } else {
+      // Pick arbitrary goblin to head towards
+      goblin = goblins[0];
+      player_new_row = player_row + signum(goblin.row - player_row);
+      player_new_col = player_col + signum(goblin.col - player_col);
+      if between(player_new_row, 0, board.len()) and between(player_new_col, 0, board[0].len()) {
+        if board[player_new_row][player_new_col] == "." {
+          return GetPlayerActionResult(Location(player_new_row, player_new_col), false);
+        }
+      }
+      // Stay still
+      return GetPlayerActionResult(Location(player_row, player_col), false);
+    }
+  }
 }
 
 // Returns the index in `goblins` of the goblin at that location.
@@ -284,7 +333,14 @@ AddGoblinResult {
 }
 
 exported func main() int {
-  display = numMainArgs() > 1 and getMainArg(1) == "--display";
+
+  manual_control =
+    (numMainArgs() > 1 and getMainArg(1) == "--manual_control") or
+    (numMainArgs() > 2 and getMainArg(2) == "--manual_control");
+
+  display =
+    (numMainArgs() > 1 and getMainArg(1) == "--display") or
+    (numMainArgs() > 2 and getMainArg(2) == "--display");
 
   num_rows = 50;
   num_cols = 200;
@@ -309,15 +365,21 @@ exported func main() int {
   /// foreach _ in 0..1000 {
   /// (with a break or return inside)
   num_turns = 0;
-  running = true;
-  while running and num_turns < 1000 {
+  while num_turns < 1000 {
     if display {
       Display(&board, &goblins, playerRow, playerCol);
     }
 
     [gpa_rand_seed, set rand] = Next(rand);
-    [new_player_row, new_player_col] =
-        GetPlayerAction(&board, &goblins, gpa_rand_seed, playerRow, playerCol);
+    [[new_player_row, new_player_col], quit] =
+        GetPlayerAction(manual_control, &board, &goblins, gpa_rand_seed, playerRow, playerCol);
+    if quit {
+      if display {
+        Display(&board, &goblins, playerRow, playerCol);
+        print("Game ended!\n");
+      }
+      break;
+    }
     killed_goblin_index = GoblinAt(&goblins, new_player_row, new_player_col);
     if killed_goblin_index >= 0 {
       [killed_goblin, set goblins] = ExtractGoblin(goblins, killed_goblin_index);
@@ -344,14 +406,6 @@ exported func main() int {
       }
 
       set goblin_i = goblin_i + 1;
-    }
-
-    if goblins.len() == 0 {
-      if display {
-        Display(&board, &goblins, playerRow, playerCol);
-        print("You win!\n");
-      }
-      set running = false;
     }
 
     set num_turns = num_turns + 1;
