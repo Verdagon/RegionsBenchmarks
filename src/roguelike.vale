@@ -342,8 +342,8 @@ exported func main() int {
     (numMainArgs() > 1 and getMainArg(1) == "--display") or
     (numMainArgs() > 2 and getMainArg(2) == "--display");
 
-  num_rows = 500;
-  num_cols = 2000;
+  num_rows = 250;
+  num_cols = 1000;
 
   rand = XS32Rand(1337i64);
 
@@ -352,7 +352,7 @@ exported func main() int {
   playerRow = num_rows / 2;
   playerCol = num_cols / 2;
 
-  initial_num_goblins = 1000;
+  initial_num_goblins = 500;
 
   goblins = []Goblin(initial_num_goblins);
   /// foreach _ in 0..initial_num_goblins {
