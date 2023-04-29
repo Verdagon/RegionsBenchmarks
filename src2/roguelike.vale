@@ -12,10 +12,6 @@ func between(x int, min int, max int) bool {
   min <= x and x <= max
 }
 
-func !=(a int, b int) bool {
-  return not (a == b);
-}
-
 struct XS32Rand {
   seed! i64;
 }
@@ -42,99 +38,38 @@ struct Goblin {
   col! int;
 }
 
+func MakeBoard(num_rows int, num_cols int) [][]str {
+  rows = [][]str(num_rows);
 
-pure func CellularAutomata<r' imm>(old_map &r'[][]bool) [][]bool {
-  new_map = [][]bool(1000);
-  /// foreach row_i in 0..1000 {
+  /// foreach _ in 0..num_rows {
   row_i = 0;
-  while row_i < 1000 {
-    new_row = []bool(4000);
-    /// foreach col_i in 0..4000 {
+  while row_i < num_rows {
+
+    row = []str(num_cols);
+
+    /// foreach _ in 0..num_cols {
     col_i = 0;
-    while col_i < 4000 {
-      num_walkable_neighbors = 0;
-      /// foreach neighbor_row_i in max(0, row_i - 1)..min(1000 - 1, row_i + 1) {
-      neighbor_row_i = max(0, row_i - 1);
-      while neighbor_row_i <= min(1000 - 1, row_i + 1) {
-        /// foreach neighbor_col_i in max(0, col_i - 1)..min(4000 - 1, col_i + 1) {
-        neighbor_col_i = max(0, col_i - 1);
-        while neighbor_col_i <= min(4000 - 1, col_i + 1) {
-          if row_i != neighbor_row_i or col_i != neighbor_col_i {
-            if old_map[neighbor_row_i][neighbor_col_i] {
-              set num_walkable_neighbors = num_walkable_neighbors + 1;
-            }
-          }
-          set neighbor_col_i = neighbor_col_i + 1;
-        }
-        set neighbor_row_i = neighbor_row_i + 1;
-      }
-      new_walkable =
-        if num_walkable_neighbors < 4 {
-          false
-        } else if num_walkable_neighbors > 4 {
-          true
-        } else {
-          // TODO: Automatically transmigrate primitives between regions
-          if old_map[row_i][col_i] { true } else { false }
-        };
-      new_row.push(new_walkable);
+    while col_i < num_cols {
+      row.push(
+        if row_i == 0 { "#" }
+        else if col_i == 0 { "#" }
+        else if row_i == num_rows - 1 { "#" }
+        else if col_i == num_cols - 1 { "#" }
+        else { "." });
+
       set col_i = col_i + 1;
     }
-    new_map.push(new_row);
-    set row_i = row_i + 1;
-  }
-  return new_map;
-}
 
-#!DeriveStructDrop
-struct MakeBoardResult {
-  board [][]bool;
-  rand XS32Rand;
-}
-func MakeBoard(rand XS32Rand, num_rows int, num_cols int) MakeBoardResult {
-  board_0 = [][]bool(1000);
-  row_i = 0;
-  while row_i < 1000 {
-    row = []bool(4000);
-    col_i = 0;
-    while col_i < 4000 {
-      [rand_int, set rand] = Next(rand);
-      rand_bool = (rand_int mod 2i64) == 0i64;
-      // Implicit & causes a gen check in push. Inlining will fix.
-      row.push(rand_bool);
-      set col_i = col_i + 1;
-    }
-    board_0.push(row); // Same here.
+    rows.push(row);
+
     set row_i = row_i + 1;
   }
 
-  board_1 = CellularAutomata(&board_0);
-  // TODO: re-enable array drops
-  while board_0.len() > 0 {
-    row = board_0.pop();
-    while row.len() > 0 {
-      row.pop();
-    }
-    [] = row;
-  }
-  [] = board_0;
-
-  board_2 = CellularAutomata(&board_1);
-  // TODO: re-enable array drops
-  while board_1.len() > 0 {
-    row = board_1.pop();
-    while row.len() > 0 {
-      row.pop();
-    }
-    [] = row;
-  }
-  [] = board_1;
-
-  return MakeBoardResult(board_2, rand);
+  return rows;
 }
 
 pure func Display<r'>(
-    board &r'[][]bool,
+    board &r'[][]str,
     goblins &r'[]Goblin,
     playerRow int,
     playerCol int)
@@ -154,7 +89,7 @@ pure func Display<r'>(
       } else if GoblinAt(&goblins, row_i, col_i) >= 0 {
         set toPrint = toPrint + "g";
       } else {
-        set toPrint = toPrint + (if row[col_i] { "." } else { "g" });
+        set toPrint = toPrint + row[col_i];
       }
 
       set col_i = col_i + 1;
@@ -195,7 +130,7 @@ func GoRandomDirection(rand XS32Rand) GoRandomDirectionResult {
 }
 
 pure func GetGoblinAction<r'>(
-    board &r'[][]bool,
+    board &r'[][]str,
     goblins &r'[]Goblin,
     rand_seed i64,
     goblin_i int,
@@ -211,7 +146,7 @@ pure func GetGoblinAction<r'>(
     new_row = goblin.row + signum(rows_to_player);
     new_col = goblin.col + signum(cols_to_player);
     if between(new_row, 0, board.len()) and between(new_col, 0, board[0].len()) {
-      if board[new_row][new_col] == true {
+      if board[new_row][new_col] == "." {
         if GoblinAt(goblins, new_row, new_col) == -1 {
           return Location(new_row, new_col);
         }
@@ -225,7 +160,7 @@ pure func GetGoblinAction<r'>(
     new_row = goblin.row + row_delta;
     new_col = goblin.col + col_delta;
     if between(new_row, 0, board.len()) and between(new_col, 0, board[0].len()) {
-      if board[new_row][new_col] == true {
+      if board[new_row][new_col] == "." {
         if GoblinAt(goblins, new_row, new_col) == -1 {
           return Location(new_row, new_col);
         }
@@ -293,7 +228,7 @@ struct GetPlayerActionResult {
 }
 pure func GetPlayerAction<r'>(
     manual_control bool,
-    board &r'[][]bool,
+    board &r'[][]str,
     goblins &r'[]Goblin,
     rand_seed i64,
     player_row int,
@@ -307,7 +242,7 @@ pure func GetPlayerAction<r'>(
       player_new_row = player_row + row_delta;
       player_new_col = player_col + col_delta;
       if between(player_new_row, 0, board.len()) and between(player_new_col, 0, board[0].len()) {
-        if board[player_new_row][player_new_col] == true {
+        if board[player_new_row][player_new_col] == "." {
           return GetPlayerActionResult(player_new_row, player_new_col, false);
         }
       }
@@ -332,7 +267,7 @@ pure func GetPlayerAction<r'>(
       player_new_row = player_row + signum(goblin.row - player_row);
       player_new_col = player_col + signum(goblin.col - player_col);
       if between(player_new_row, 0, board.len()) and between(player_new_col, 0, board[0].len()) {
-        if board[player_new_row][player_new_col] == true {
+        if board[player_new_row][player_new_col] == "." {
           return GetPlayerActionResult(player_new_row, player_new_col, false);
         }
       }
@@ -444,7 +379,7 @@ exported func main() int {
 
   rand = XS32Rand(1337i64);
 
-  [board, set rand] = MakeBoard(rand, num_rows, num_cols);
+  board = MakeBoard(num_rows, num_cols);
 
   playerRow = num_rows / 2;
   playerCol = num_cols / 2;
